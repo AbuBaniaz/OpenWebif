@@ -21,10 +21,12 @@
 from json import loads, JSONDecodeError
 from re import match
 from os.path import isfile
+import csv
+import io
 from Components.config import config as comp_config
 from Screens.InfoBar import InfoBar
 
-from .models.info import getInfo, getCurrentTime, getStatusInfo, getFrontendStatus, testPipStatus
+from .models.info import getInfo, getCurrentTime, getStatusInfo, getFrontendStatus, testPipStatus, getOrb
 from .models.services import getCurrentService, getBouquets, getServices, getSubServices, getSatellites, getBouquetEpg, getBouquetNowNextEpg, getMultiChannelNowNextEpg, getSearchEpg, getSimilarEpg, getChannelEpg, getNowNextEpg, getAllServices, getPlayableServices, getPlayableService, getParentalControlList, getEvent, getServiceRef, getPicon, getAllServicesRaw
 from .models.volume import getVolumeStatus, setVolumeUp, setVolumeDown, setVolumeMute, setVolume
 from .models.audiotrack import getAudioTracks, setAudioTrack
@@ -42,7 +44,7 @@ from .models.plugins import reloadPlugins
 from .i18n import _
 from .base import BaseController
 from .stream import StreamController
-from .utilities import getUrlArg, toBinary, toString
+from .utilities import getUrlArg, toBinary, toString, parse_servicereference, NS_LOOKUP
 from .defaults import globalVars
 from .models.epg import EPG
 
@@ -459,8 +461,64 @@ class WebController(BaseController):
 		return getCurrentLocation()
 
 	def P_allservicescsv(self, request):
+		request.setHeader('Content-Disposition', 'inline; filename=allservices.csv')
 		mode = getUrlArg(request, "mode", "all")
-		return getAllServicesRaw(mode, csv=True)
+		raw = getAllServicesRaw(mode, csv=True)
+		if isinstance(raw, bytes):
+			raw = raw.decode("utf-8")
+		# Prepend UTF-8 BOM so Excel detects the encoding correctly instead
+		# of misreading non-ASCII names as cp1252
+		return "\ufeff" + raw
+
+	def _decodeLocation(self, ns):
+		"""Orbital position, or DVB-C/DVB-T, from a service ref's namespace."""
+		label = NS_LOOKUP.get(ns)
+		if label:
+			return label
+		return getOrb((ns >> 16) & 0xFFFF)
+
+	def P_allservicescsvalphabetical(self, request):
+		"""allservicescsvalphabetical: Name, Service ref, Service type, SID, TSID, Orbital position — sorted by name."""
+		mode = getUrlArg(request, "mode", "all")
+		raw = getAllServicesRaw(mode, csv=True)
+
+		is_bytes = isinstance(raw, bytes)
+		text = raw.decode("utf-8") if is_bytes else raw
+
+		rows = list(csv.reader(io.StringIO(text)))
+		if not rows:
+			return raw
+
+		body = rows[1:]  # original header discarded; we build our own below
+
+		out_rows = []
+		for row in body:
+			if len(row) < 2:
+				continue
+			sref, name = row[0], row[1]
+			try:
+				parsed = parse_servicereference(sref)
+				stype_dec = str(parsed['service_type'])
+				sid = "0x%x" % parsed['sid']
+				tsid = "0x%x" % parsed['tsid']
+				location = self._decodeLocation(parsed['ns'])
+			except (IndexError, ValueError):
+				stype_dec = sid = tsid = location = "?"
+			out_rows.append([name, sref, stype_dec, sid, tsid, location])
+
+		out_rows.sort(key=lambda r: r[0].lower())
+
+		out = io.StringIO()
+		writer = csv.writer(out)
+		writer.writerow(["Name", "Service ref", "Service type", "SID", "TSID", "Orbital position"])
+		writer.writerows(out_rows)
+		result = out.getvalue()
+
+		request.setHeader('Content-Disposition', 'inline; filename=allservices_alphabetical.csv')
+
+		# Prepend UTF-8 BOM so Excel detects the encoding correctly instead
+		# of misreading non-ASCII names as cp1252
+		return "\ufeff" + result
 
 	def P_allservices(self, request):
 		mode = getUrlArg(request, "mode", "all")
