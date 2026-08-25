@@ -150,15 +150,22 @@ class EPG():
 		self.streamRelay = []
 
 	def search(self, querystring, searchfulldescription=False):
-		querytype = eEPGCache.PARTIAL_TITLE_SEARCH
-		if searchfulldescription:
-			if hasattr(eEPGCache, "FULL_DESCRIPTION_SEARCH"):
-				querytype = eEPGCache.FULL_DESCRIPTION_SEARCH
-			elif hasattr(eEPGCache, "PARTIAL_DESCRIPTION_SEARCH"):
-				querytype = eEPGCache.PARTIAL_DESCRIPTION_SEARCH
+		criteria = (SEARCH_FIELDS, MAX_RESULTS, eEPGCache.PARTIAL_TITLE_SEARCH, querystring, CASE_INSENSITIVE_QUERY)
+		results = self._instance.search(criteria) or []
+		title_count = len(results)
+		desc_count = 0
 
-		criteria = (SEARCH_FIELDS, MAX_RESULTS, querytype, querystring, CASE_INSENSITIVE_QUERY)
-		return self._instance.search(criteria)
+		if searchfulldescription and hasattr(eEPGCache, "PARTIAL_DESCRIPTION_SEARCH"):
+			desc_criteria = (SEARCH_FIELDS, MAX_RESULTS, eEPGCache.PARTIAL_DESCRIPTION_SEARCH, querystring, CASE_INSENSITIVE_QUERY)
+			desc_results = self._instance.search(desc_criteria) or []
+			desc_count = len(desc_results)
+			seen = {(ev[0], ev[7]) for ev in results}  # (event id, sref)
+			for ev in desc_results:
+				key = (ev[0], ev[7])
+				if key not in seen:
+					results.append(ev)
+					seen.add(key)
+		return results
 
 	def getChannelEvents(self, sref, fullsref, starttime, endtime, encode, picon, nownext):
 		if not sref:
