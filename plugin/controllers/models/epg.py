@@ -154,7 +154,7 @@ class EPG():
 		results = self._instance.search(criteria) or []
 		title_count = len(results)
 		desc_count = 0
-	
+
 		if searchfulldescription and hasattr(eEPGCache, "PARTIAL_DESCRIPTION_SEARCH"):
 			desc_criteria = (SEARCH_FIELDS, MAX_RESULTS, eEPGCache.PARTIAL_DESCRIPTION_SEARCH, querystring, CASE_INSENSITIVE_QUERY)
 			desc_results = self._instance.search(desc_criteria) or []
@@ -165,6 +165,14 @@ class EPG():
 				if key not in seen:
 					results.append(ev)
 					seen.add(key)
+
+		try:
+			with open("/tmp/owif_epg_debug.log", "a") as dbgf:
+				dbgf.write("query=%r fulldesc=%r title_hits=%d desc_hits=%d merged_total=%d\n" % (
+					querystring, searchfulldescription, title_count, desc_count, len(results)))
+		except Exception:
+			pass
+
 		return results
 
 	def getChannelEvents(self, sref, fullsref, starttime, endtime, encode, picon, nownext):
